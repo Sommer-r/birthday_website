@@ -68,9 +68,11 @@
       text-align: center;
       pointer-events: none;
       opacity: 0;
-      transition: opacity 2.5s 0.6s;
+      transition: opacity 0.8s;
       font-family: Georgia, "Times New Roman", serif;
     }
+
+    #finale.sichtbar { transition: opacity 2.5s 0.6s; }
 
     #finale h1 {
       margin: 0 0 18px;
@@ -90,6 +92,21 @@
       white-space: pre-line;
     }
 
+    #zurueck {
+      margin-top: 34px;
+      color: rgba(225, 230, 255, 0.6);
+      font-size: 15px;
+      letter-spacing: 0.04em;
+      opacity: 0;
+      transition: opacity 0.4s;
+    }
+
+    /* Hinweis erst einblenden, wenn die Nachricht in Ruhe gelesen wurde */
+    #finale.sichtbar #zurueck {
+      opacity: 1;
+      transition: opacity 1s 6s;
+    }
+
     .sichtbar { opacity: 1 !important; }
   </style>
 </head>
@@ -105,6 +122,7 @@
   <div id="finale">
     <h1 id="finaleName"></h1>
     <p id="finaleText"></p>
+    <div id="zurueck">Tippe, um zur Blume zurückzukehren</div>
   </div>
 
   <script>
@@ -467,7 +485,7 @@
     const blattMitte = blattPunkt(0.62, 0.5);
     const MITTE = [0, 0.25, 0];
 
-    // Ablauf: warten -> blaetter -> mitte -> finale
+    // Ablauf: warten -> blaetter -> mitte <-> finale
     let phase = "warten";
 
     document.getElementById("finaleName").textContent = NAME;
@@ -545,9 +563,17 @@
       document.getElementById("finale").classList.add("sichtbar");
     }
 
+    function zurueckZurBlume() {
+      phase = "mitte";
+      canvas.classList.remove("gedimmt");
+      document.getElementById("finale").classList.remove("sichtbar");
+      zeigeHinweis("Tippe auf die Mitte für deine Nachricht");
+    }
+
     canvas.addEventListener("click", (e) => {
       if (phase === "blaetter") blattAntippen(e.clientX, e.clientY);
       else if (phase === "mitte") mitteAntippen(e.clientX, e.clientY);
+      else if (phase === "finale") zurueckZurBlume();
     });
 
     // Sterne addieren ihr Licht, statt sich zu verdecken
