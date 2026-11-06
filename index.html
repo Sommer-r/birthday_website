@@ -1,0 +1,563 @@
+<!DOCTYPE html>
+<html lang="de">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Happy Birthday</title>
+  <style>
+    html, body {
+      margin: 0;
+      height: 100%;
+      overflow: hidden;
+      touch-action: manipulation;
+      -webkit-tap-highlight-color: transparent;
+      user-select: none;
+      -webkit-user-select: none;
+      background: radial-gradient(circle at 50% 48%, #120c2a 0%, #070616 45%, #020208 100%);
+    }
+
+    canvas {
+      position: fixed;
+      inset: 0;
+      width: 100%;
+      height: 100%;
+      display: block;
+    }
+
+    #blume { transition: opacity 2s; cursor: pointer; }
+    #blume.gedimmt { opacity: 0.22; }
+
+    #texte {
+      position: fixed;
+      left: 16px;
+      right: 16px;
+      bottom: max(7vh, 28px);
+      text-align: center;
+      pointer-events: none;
+      font-family: Georgia, "Times New Roman", serif;
+    }
+
+    #gruss {
+      min-height: 1.3em;
+      color: #fff0d0;
+      font-size: clamp(26px, 6vw, 40px);
+      font-style: italic;
+      text-shadow: 0 0 18px rgba(255, 190, 90, 0.55);
+      opacity: 0;
+      transition: opacity 0.5s;
+    }
+
+    #hinweis {
+      margin-top: 10px;
+      color: rgba(225, 230, 255, 0.72);
+      font-size: 15px;
+      letter-spacing: 0.04em;
+      opacity: 0;
+      transition: opacity 0.8s;
+    }
+
+    #finale {
+      position: fixed;
+      inset: 0;
+      display: flex;
+      flex-direction: column;
+      align-items: center;
+      justify-content: center;
+      box-sizing: border-box;
+      padding: 24px;
+      text-align: center;
+      pointer-events: none;
+      opacity: 0;
+      transition: opacity 2.5s 0.6s;
+      font-family: Georgia, "Times New Roman", serif;
+    }
+
+    #finale h1 {
+      margin: 0 0 18px;
+      color: #ffc95e;
+      font-size: clamp(42px, 11vw, 76px);
+      font-weight: normal;
+      font-style: italic;
+      text-shadow: 0 0 26px rgba(255, 180, 70, 0.6);
+    }
+
+    #finale p {
+      max-width: 30em;
+      margin: 0;
+      color: #f4efff;
+      font-size: clamp(18px, 4.6vw, 24px);
+      line-height: 1.55;
+      white-space: pre-line;
+    }
+
+    .sichtbar { opacity: 1 !important; }
+  </style>
+</head>
+<body>
+  <canvas id="sterne"></canvas>
+  <canvas id="blume"></canvas>
+
+  <div id="texte">
+    <div id="gruss"></div>
+    <div id="hinweis"></div>
+  </div>
+
+  <div id="finale">
+    <h1 id="finaleName"></h1>
+    <p id="finaleText"></p>
+  </div>
+
+  <script>
+    // ---------- Texte ----------
+    const NAME = "[NAME]";
+    const NACHRICHT = "[DEINE NACHRICHT]";   // \n macht einen Zeilenumbruch
+
+    // Ein Glückwunsch pro Blatt im äußeren Kranz
+    const GRUESSE = [
+      "¡Feliz cumpleaños!",
+      "Buon compleanno!",
+      "Happy Birthday!",
+      "Všechno nejlepší k narozeninám!",
+      "Alles Gute zum Geburtstag!",
+      "Joyeux anniversaire !",
+      "生日快乐！",
+    ];
+
+    // ---------- Einstellungen ----------
+    const TAG = 7;      // Anzahl der Blätter pro Kranz
+    const MONAT = 11;   // Form der Blätter
+
+    const FARBE_INNEN  = "#ff4f96";   // Sterne am Blattansatz
+    const FARBE_AUSSEN = "#dfe6ff";   // Sterne an der Blattspitze
+    const FARBE_GOLD   = "#ffb52e";   // Sterne in der Mitte
+
+    const KANTENSTERNE = 9;     // große Sterne pro Blattseite, mit Linien verbunden
+    const STERNENSTAUB = 170;   // kleine Sterne pro Blatt
+    const LINIEN = 0.2;         // Helligkeit der Sternbild-Linien (0 = keine)
+    const DAUER = 6;            // Sekunden, bis alle Sterne an ihrem Platz sind
+    const WIRBEL = 2.2;         // wie stark die Sterne beim Anflug kreisen
+
+    // Die Kränze: Größe, Neigung nach oben (Grad), Versatz in Blattbreiten, Sternendichte
+    const KRAENZE = [
+      { groesse: 1.00, neigung:  8, versatz: 0.0, dichte: 1.6 },
+      { groesse: 0.72, neigung: 26, versatz: 0.5, dichte: 1.0 },
+      { groesse: 0.46, neigung: 46, versatz: 0.0, dichte: 1.0 },
+    ];
+
+    // ---------- Blatt als Fläche im Raum ----------
+    const form = 0.2 + MONAT / 24;
+    const breite = 0.68 * Math.sin(Math.PI / TAG);
+
+    // u: Ansatz -> Spitze (0..1), v: linker -> rechter Rand (0..1)
+    function blattPunkt(u, v) {
+      const s = 2 * v - 1;
+      const w = breite * Math.sin(Math.PI * u ** 1.4) ** form;
+
+      const x = 0.1 + 0.9 * u;                          // nach außen, Mitte bleibt frei
+      const bogen = 0.2 * Math.sin(Math.PI * u * 0.9);  // Wölbung längs
+      const schale = 0.3 * w * s * s;                   // Ränder nach oben
+      const z = s * w;                                  // zur Seite
+
+      return [x, bogen + schale, z];
+    }
+
+    // ---------- Kleine Matrixrechnung ----------
+    function mal(a, b) {
+      const m = new Float32Array(16);
+      for (let z = 0; z < 4; z++) {
+        for (let s = 0; s < 4; s++) {
+          for (let k = 0; k < 4; k++) m[s * 4 + z] += a[k * 4 + z] * b[s * 4 + k];
+        }
+      }
+      return m;
+    }
+
+    function drehungX(w) {
+      const c = Math.cos(w), s = Math.sin(w);
+      return [1,0,0,0,  0,c,s,0,  0,-s,c,0,  0,0,0,1];
+    }
+
+    function drehungY(w) {
+      const c = Math.cos(w), s = Math.sin(w);
+      return [c,0,-s,0,  0,1,0,0,  s,0,c,0,  0,0,0,1];
+    }
+
+    function drehungZ(w) {
+      const c = Math.cos(w), s = Math.sin(w);
+      return [c,s,0,0,  -s,c,0,0,  0,0,1,0,  0,0,0,1];
+    }
+
+    function verschieben(x, y, z) { return [1,0,0,0, 0,1,0,0, 0,0,1,0, x,y,z,1]; }
+    function skalieren(f) { return [f,0,0,0, 0,f,0,0, 0,0,f,0, 0,0,0,1]; }
+
+    function perspektive(sichtfeld, seitenverhaeltnis, nah, fern) {
+      const f = 1 / Math.tan(sichtfeld / 2);
+      const t = 1 / (nah - fern);
+      return [f / seitenverhaeltnis,0,0,0,  0,f,0,0,  0,0,(nah + fern) * t,-1,  0,0,2 * nah * fern * t,0];
+    }
+
+    // ---------- WebGL vorbereiten ----------
+    const canvas = document.getElementById("blume");
+    const gl = canvas.getContext("webgl2", { alpha: true, antialias: true });
+
+    // Hinweis statt leerer Seite, falls das Gerät kein WebGL2 kann
+    if (!gl) {
+      const hinweis = document.getElementById("hinweis");
+      hinweis.textContent = "Bitte öffne die Seite in einem aktuellen Safari oder Chrome.";
+      hinweis.classList.add("sichtbar");
+      throw new Error("WebGL2 nicht verfügbar");
+    }
+
+    const VERTEX_SHADER = `#version 300 es
+      in vec3 aPos;
+      in vec4 aInfo;   // Größe, Helligkeit, Phase, Position am Blatt (0..1)
+      in vec3 aStart;  // Startpunkt des Sterns im Nachthimmel
+      uniform mat4 uModell;
+      uniform mat4 uKameraMatrix;
+      uniform float uPixel;
+      uniform float uZeit;
+      uniform float uFortschritt;   // 0 = Sterne im Himmel, 1 = fertige Blume
+      uniform float uWirbel;
+      uniform float uLeuchten;      // 1 = Blatt leuchtet golden
+      uniform vec3 uGoldFarbe;
+      uniform vec3 uInnen;
+      uniform vec3 uAussen;
+      out vec3 vFarbe;
+      out float vHell;
+
+      void main() {
+        // jeder Stern startet etwas versetzt und bremst am Ziel sanft ab
+        float p = clamp((uFortschritt - aInfo.z * 0.45) / 0.55, 0.0, 1.0);
+        p = p * p * (3.0 - 2.0 * p);
+
+        vec3 ziel = (uModell * vec4(aPos, 1.0)).xyz;
+        vec3 welt = mix(aStart, ziel, p);
+
+        // beim Anflug um die Blumenachse kreisen
+        float wirbel = (1.0 - p) * uWirbel;
+        float c = cos(wirbel), s = sin(wirbel);
+        welt.xz = mat2(c, s, -s, c) * welt.xz;
+
+        gl_Position = uKameraMatrix * vec4(welt, 1.0);
+        gl_PointSize = max(aInfo.x, 0.03) * uPixel / gl_Position.w;
+
+        // jeder Stern funkelt in seinem eigenen Takt
+        float funkeln = 0.7 + 0.3 * sin(uZeit * (1.0 + aInfo.z * 1.6) + aInfo.z * 40.0);
+        vHell = mix(0.55, aInfo.y, p) * funkeln;
+        vFarbe = mix(uInnen, uAussen, smoothstep(0.05, 0.85, aInfo.w));
+        vFarbe = mix(vFarbe, uGoldFarbe, uLeuchten);
+        vHell *= 1.0 + 0.6 * uLeuchten;
+      }`;
+
+    const FRAGMENT_SHADER = `#version 300 es
+      precision highp float;
+      in vec3 vFarbe;
+      in float vHell;
+      uniform float uLinie;
+      out vec4 ausgabe;
+
+      void main() {
+        if (uLinie > 0.0) {
+          ausgabe = vec4(vFarbe * uLinie, uLinie);
+          return;
+        }
+
+        // weicher Stern: heller Kern, Schein und zwei feine Strahlen
+        vec2 p = 2.0 * gl_PointCoord - 1.0;
+        float d = length(p);
+        float kern = smoothstep(0.16, 0.03, d);
+        float schein = exp(-d * d * 9.0) * 0.5;
+        float strahlen = exp(-abs(p.x) * 34.0) * exp(-abs(p.y) * 3.5)
+                       + exp(-abs(p.y) * 34.0) * exp(-abs(p.x) * 3.5);
+        float rand = smoothstep(1.0, 0.75, d);
+        float a = (kern + schein + 0.5 * strahlen) * rand * vHell;
+
+        ausgabe = vec4(mix(vFarbe, vec3(1.0), kern * 0.6) * a, a);
+      }`;
+
+    function shader(typ, quelle) {
+      const s = gl.createShader(typ);
+      gl.shaderSource(s, quelle);
+      gl.compileShader(s);
+      if (!gl.getShaderParameter(s, gl.COMPILE_STATUS)) console.error(gl.getShaderInfoLog(s));
+      return s;
+    }
+
+    const programm = gl.createProgram();
+    gl.attachShader(programm, shader(gl.VERTEX_SHADER, VERTEX_SHADER));
+    gl.attachShader(programm, shader(gl.FRAGMENT_SHADER, FRAGMENT_SHADER));
+    gl.linkProgram(programm);
+    gl.useProgram(programm);
+
+    const ort = {};
+    for (const name of ["uModell", "uKameraMatrix", "uPixel", "uZeit", "uFortschritt", "uWirbel", "uLeuchten", "uGoldFarbe", "uInnen", "uAussen", "uLinie"]) {
+      ort[name] = gl.getUniformLocation(programm, name);
+    }
+
+    // Lädt eine Sternenliste auf die Grafikkarte
+    function wolke(sterne, kante) {
+      const vao = gl.createVertexArray();
+      gl.bindVertexArray(vao);
+      gl.bindBuffer(gl.ARRAY_BUFFER, gl.createBuffer());
+      gl.bufferData(gl.ARRAY_BUFFER, new Float32Array(sterne.flat()), gl.STATIC_DRAW);
+
+      const pos = gl.getAttribLocation(programm, "aPos");
+      const info = gl.getAttribLocation(programm, "aInfo");
+      const start = gl.getAttribLocation(programm, "aStart");
+      gl.enableVertexAttribArray(pos);
+      gl.enableVertexAttribArray(info);
+      gl.enableVertexAttribArray(start);
+      gl.vertexAttribPointer(pos, 3, gl.FLOAT, false, 40, 0);
+      gl.vertexAttribPointer(info, 4, gl.FLOAT, false, 40, 12);
+      gl.vertexAttribPointer(start, 3, gl.FLOAT, false, 40, 28);
+
+      return { vao, anzahl: sterne.length, kante };
+    }
+
+    function stern(punkt, groesse, hell, u) {
+      // zufälliger Startpunkt rund um die Blume
+      const winkel = Math.random() * 2 * Math.PI;
+      const radius = 0.5 + 2.4 * Math.sqrt(Math.random());
+      const start = [radius * Math.cos(winkel), 0.8 * (Math.random() - 0.5), radius * Math.sin(winkel)];
+
+      return [...punkt, groesse, hell, Math.random(), u, ...start];
+    }
+
+    // Ein Blatt: zuerst die Kante als Sternbild, danach der Sternenstaub
+    function blattSterne(groesse, dichte) {
+      const sterne = [];
+      const staub = Math.round(STERNENSTAUB * dichte * groesse ** 2);   // innen weniger, sonst wird es zu hell
+      const n = KANTENSTERNE;
+
+      for (let i = 0; i <= 2 * n; i++) {
+        const seite = i <= n ? 0 : 1;
+        const u = i <= n ? i / n : 2 - i / n;
+        const wackeln = i === 0 || i === n || i === 2 * n ? 0 : (Math.random() - 0.5) * 0.04;
+        const hell = Math.min(1, 0.12 + 1.3 * u);   // zur Mitte hin dunkler
+        sterne.push(stern(blattPunkt(u + wackeln, seite), 0.085 * hell, hell, u));
+      }
+
+      for (let i = 0; i < staub; i++) {
+        const u = 0.3 + 0.7 * Math.random() ** 0.8;       // Blattansatz bleibt frei
+        const s = (Math.random() < 0.5 ? -1 : 1) * Math.random() ** 0.55;   // dichter zum Rand hin
+        sterne.push(stern(blattPunkt(u, (s + 1) / 2), 0.02 + 0.03 * Math.random(), 0.45 + 0.45 * Math.random(), u));
+      }
+
+      return wolke(sterne, 2 * n + 1);
+    }
+
+    const blaetter = [];
+    for (const kranz of KRAENZE) {
+      for (let i = 0; i < TAG; i++) {
+        const winkel = (i + kranz.versatz) * 2 * Math.PI / TAG;
+        const neigung = kranz.neigung * Math.PI / 180;
+        const lage = mal(drehungY(winkel), mal(drehungZ(neigung), skalieren(kranz.groesse)));
+        blaetter.push({ wolke: blattSterne(kranz.groesse, kranz.dichte), lage, getippt: false, leuchten: 0 });
+      }
+    }
+
+    // Goldene Mitte nach dem goldenen Winkel (wie bei einer Sonnenblume)
+    const GOLDENER_WINKEL = Math.PI * (3 - Math.sqrt(5));
+    const goldSterne = [];
+    for (let i = 0; i < 90; i++) {
+      const r = 0.13 * Math.sqrt(i / 90);
+      const w = i * GOLDENER_WINKEL;
+      const y = 0.2 + 0.1 * (1 - (r / 0.13) ** 2);
+      goldSterne.push(stern([r * Math.cos(w), y, r * Math.sin(w)], 0.065, 1, 0.5));
+    }
+    const mitte = wolke(goldSterne, 0);
+
+    // ---------- Hintergrund ----------
+    function sterneZeichnen() {
+      const flaeche = document.getElementById("sterne");
+      flaeche.width = innerWidth;
+      flaeche.height = innerHeight;
+      const c = flaeche.getContext("2d");
+      for (let i = 0; i < 90; i++) {
+        c.fillStyle = `rgba(225, 230, 255, ${0.05 + Math.random() * 0.3})`;
+        c.beginPath();
+        c.arc(Math.random() * innerWidth, Math.random() * innerHeight, 0.3 + Math.random() * 0.9, 0, 2 * Math.PI);
+        c.fill();
+      }
+    }
+
+    // ---------- Szene zeichnen ----------
+    function farbe(name, hex) {
+      const kanal = (i) => parseInt(hex.slice(i, i + 2), 16) / 255;
+      gl.uniform3f(ort[name], kanal(1), kanal(3), kanal(5));
+    }
+
+    function groesseAnpassen() {
+      const pixel = Math.min(devicePixelRatio, 2);
+      canvas.width = canvas.clientWidth * pixel;
+      canvas.height = canvas.clientHeight * pixel;
+      gl.viewport(0, 0, canvas.width, canvas.height);
+    }
+
+    function zeichneWolke(objekt, modell, linien, leuchten) {
+      gl.uniformMatrix4fv(ort.uModell, false, modell);
+      gl.uniform1f(ort.uLeuchten, leuchten);
+      gl.bindVertexArray(objekt.vao);
+
+      if (objekt.kante > 0 && linien > 0) {
+        gl.uniform1f(ort.uLinie, linien);
+        gl.drawArrays(gl.LINE_STRIP, 0, objekt.kante);
+      }
+
+      gl.uniform1f(ort.uLinie, 0);
+      gl.drawArrays(gl.POINTS, 0, objekt.anzahl);
+    }
+
+    let startzeit = null;
+    let sekunden = 0;
+    let kameraMatrix = null;
+    let drehung = null;
+
+    function bild(zeit) {
+      if (startzeit === null) startzeit = zeit;
+      const t = (zeit - startzeit) / 1000;
+      sekunden = t;
+      const fortschritt = Math.min(t / DAUER, 1);
+      const linien = LINIEN * Math.min(Math.max((t - DAUER) / 1.5, 0), 1);   // Linien erst am Ende einblenden
+      const seite = canvas.width / canvas.height;
+      const abstand = (seite < 1 ? 3.7 : 4.4) / Math.min(seite, 1);
+      const pitch = 1.14 + 0.05 * Math.sin(t * 0.45);
+
+      const sicht = mal(verschieben(0, 0, -abstand), drehungX(pitch));
+      kameraMatrix = mal(perspektive(0.62, seite, 0.1, 30), mal(sicht, verschieben(0, -0.1, 0)));
+      drehung = drehungY(t * 0.1);
+
+      gl.clearColor(0, 0, 0, 0);
+      gl.clear(gl.COLOR_BUFFER_BIT);
+      gl.uniformMatrix4fv(ort.uKameraMatrix, false, kameraMatrix);
+      gl.uniform1f(ort.uPixel, Math.min(canvas.width, canvas.height) * Math.max(1, 1 / seite) * 1.6);
+      gl.uniform1f(ort.uZeit, t);
+      gl.uniform1f(ort.uFortschritt, fortschritt);
+      gl.uniform1f(ort.uWirbel, WIRBEL);
+
+      farbe("uInnen", FARBE_INNEN);
+      farbe("uAussen", FARBE_AUSSEN);
+      farbe("uGoldFarbe", FARBE_GOLD);
+
+      for (const b of blaetter) {
+        b.leuchten += ((b.getippt ? 1 : 0) - b.leuchten) * 0.06;
+        zeichneWolke(b.wolke, mal(drehung, b.lage), linien, b.leuchten);
+      }
+
+      // die Mitte pulsiert, sobald alle Blätter angetippt sind
+      const puls = phase === "mitte" ? 0.5 + 0.5 * Math.sin(t * 3.2) : 0;
+      const hebel = mal(verschieben(0, 0.25, 0), mal(skalieren(1 + 0.14 * puls), verschieben(0, -0.25, 0)));
+
+      farbe("uInnen", FARBE_GOLD);
+      farbe("uAussen", FARBE_GOLD);
+      zeichneWolke(mitte, mal(drehung, hebel), 0, puls);
+
+      if (phase === "warten" && t > DAUER + 1.5) {
+        phase = "blaetter";
+        zeigeHinweis("Tippe auf ein Blütenblatt");
+      }
+
+      requestAnimationFrame(bild);
+    }
+
+    // ---------- Antippen ----------
+    const elGruss = document.getElementById("gruss");
+    const elHinweis = document.getElementById("hinweis");
+    const aeussereBlaetter = blaetter.slice(0, TAG);
+    const blattMitte = blattPunkt(0.62, 0.5);
+    const MITTE = [0, 0.25, 0];
+
+    // Ablauf: warten -> blaetter -> mitte -> finale
+    let phase = "warten";
+
+    document.getElementById("finaleName").textContent = NAME;
+    document.getElementById("finaleText").textContent = NACHRICHT;
+
+    function zeigeHinweis(text) {
+      elHinweis.textContent = text;
+      elHinweis.classList.toggle("sichtbar", text !== "");
+    }
+
+    function zeigeGruss(text) {
+      elGruss.classList.remove("sichtbar");
+      setTimeout(() => {
+        elGruss.textContent = text;
+        elGruss.classList.add("sichtbar");
+      }, 220);
+    }
+
+    // Rechnet einen 3D-Punkt in Bildschirmkoordinaten um
+    function aufSchirm(modell, [x, y, z]) {
+      const m = mal(kameraMatrix, modell);
+      const w = m[3] * x + m[7] * y + m[11] * z + m[15];
+      return [
+        ((m[0] * x + m[4] * y + m[8] * z + m[12]) / w + 1) / 2 * canvas.clientWidth,
+        (1 - (m[1] * x + m[5] * y + m[9] * z + m[13]) / w) / 2 * canvas.clientHeight,
+      ];
+    }
+
+    function abstandZu(px, py, punkt) {
+      return Math.hypot(px - punkt[0], py - punkt[1]);
+    }
+
+    function blattAntippen(px, py) {
+      const zentrum = aufSchirm(drehung, MITTE);
+      let bestes = null;
+      let kleinster = Infinity;
+
+      for (const blatt of aeussereBlaetter) {
+        const punkt = aufSchirm(mal(drehung, blatt.lage), blattMitte);
+        const d = abstandZu(px, py, punkt);
+        if (d < kleinster) {
+          kleinster = d;
+          bestes = { blatt, reichweite: 0.62 * abstandZu(punkt[0], punkt[1], zentrum) };
+        }
+      }
+
+      if (kleinster > bestes.reichweite) return;
+
+      bestes.blatt.getippt = true;
+      zeigeGruss(GRUESSE[aeussereBlaetter.indexOf(bestes.blatt)]);
+
+      if (aeussereBlaetter.every((b) => b.getippt)) {
+        phase = "mitte";
+        zeigeHinweis("Tippe auf die Mitte");
+      } else {
+        zeigeHinweis("");
+      }
+    }
+
+    function mitteAntippen(px, py) {
+      const zentrum = aufSchirm(drehung, MITTE);
+      const rand = aufSchirm(drehung, [0.24, MITTE[1], 0]);
+      const reichweite = Math.max(40, abstandZu(zentrum[0], zentrum[1], rand));
+
+      if (abstandZu(px, py, zentrum) > reichweite) {
+        blattAntippen(px, py);   // Blätter lassen sich weiter ansehen
+        phase = "mitte";
+        return;
+      }
+
+      phase = "finale";
+      zeigeHinweis("");
+      elGruss.classList.remove("sichtbar");
+      canvas.classList.add("gedimmt");
+      document.getElementById("finale").classList.add("sichtbar");
+    }
+
+    canvas.addEventListener("click", (e) => {
+      if (phase === "blaetter") blattAntippen(e.clientX, e.clientY);
+      else if (phase === "mitte") mitteAntippen(e.clientX, e.clientY);
+    });
+
+    // Sterne addieren ihr Licht, statt sich zu verdecken
+    gl.enable(gl.BLEND);
+    gl.blendFunc(gl.ONE, gl.ONE);
+
+    addEventListener("resize", () => { groesseAnpassen(); sterneZeichnen(); });
+    groesseAnpassen();
+    sterneZeichnen();
+    requestAnimationFrame(bild);
+  </script>
+</body>
+</html>
